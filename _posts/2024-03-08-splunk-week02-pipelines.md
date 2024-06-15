@@ -1,83 +1,199 @@
 ---
 layout: post
-title: "[Splunk 12주 완성] 2주차: 로깅 파이프라인과 데이터 온보딩"
+title: "[Splunk 12주 완성] 2주차: 로깅 파이프라인과 데이터 온보딩 (심화 마스터 클래스)"
 date: 2024-03-08 09:00:00 +0900
 categories: splunk
 ---
 
-데이터가 없는 Splunk는 빈 껍데기일 뿐입니다. 1주차에서 Splunk의 기본 구조를 살펴봤다면, 이번 2주차에는 실제 데이터를 어떻게 안전하고 효율적으로 가져오는지 알아보겠습니다. 빅테크 기업에서 수만 대의 서버 로그를 처리하며 얻은 실무 노하우를 바탕으로 로깅 파이프라인의 핵심을 정리했습니다.
+# [Lecture Note] 2주차: 데이터 온보딩과 파이프라인의 심층 이해
 
-### 1. Splunk Forwarder: 데이터 전송의 핵심
+본 강의는 Splunk의 핵심인 데이터 온보딩(Data Onboarding)과 로깅 파이프라인의 내부 동작 원리를 3시간에 걸쳐 심층적으로 다루는 마스터 클래스입니다. 단순히 설정을 복사해서 붙여넣는 수준을 넘어, 데이터가 소스에서 인덱서까지 흐르는 과정에서 발생하는 내부 큐(Queue)의 동작, 메모리 관리, 그리고 대규모 환경에서의 트러블슈팅 기법을 완벽하게 이해하는 것을 목표로 합니다.
 
-Splunk로 데이터를 보내는 방법은 크게 두 가지 포워더를 사용합니다.
+---
 
-#### Universal Forwarder (UF)
-가장 가볍고 일반적인 선택입니다. 리소스를 최소한으로 사용하며 로그 파일을 읽어 인덱서로 던져주는 역할만 합니다. 데이터 가공 기능이 거의 없어서 CPU와 메모리 점유율이 매우 낮습니다.
+## Module 1: 로그 생성 (The Source) - 데이터는 어디서 오는가?
 
-#### Heavy Forwarder (HF)
-UF와 달리 데이터 파싱과 필터링 기능이 포함된 풀 버전의 Splunk 인스턴스입니다. 인덱서로 보내기 전에 특정 로그를 버리거나 민감 정보를 마스킹해야 할 때 사용합니다. 리소스를 많이 먹기 때문에 꼭 필요한 위치에만 배치합니다.
+많은 입문자가 로그가 이미 서버에 존재한다고 가정합니다. 하지만 실무에서는 로그가 Splunk에서 분석하기 좋은 형태로 생성되도록 소스 시스템을 먼저 설정해야 합니다.
 
-### 2. HTTP Event Collector (HEC)와 Syslog
+### 1. Web Server: Nginx/Apache JSON 로깅 설정
+기본적인 텍스트 로그는 파싱이 어렵습니다. 처음부터 JSON 형태로 로그를 생성하면 Splunk에서 별도의 정규표현식 없이도 필드를 자동으로 인식합니다.
 
-에이전트를 설치할 수 없는 환경에서는 HEC나 Syslog를 사용합니다.
+**Nginx 설정 (`/etc/nginx/nginx.conf`):**
+```nginx
+http {
+    log_format json_analytics escape=json
+        '{'
+            '"time_local":"$time_local",'
+            '"remote_addr":"$remote_addr",'
+            '"remote_user":"$remote_user",'
+            '"request":"$request",'
+            '"status": "$status",'
+            '"body_bytes_sent":"$body_bytes_sent",'
+            '"request_time":"$request_time",'
+            '"http_referrer":"$http_referer",'
+            '"http_user_agent":"$http_user_agent"'
+        '}';
 
-#### HTTP Event Collector (HEC)
-REST API를 통해 데이터를 직접 쏘는 방식입니다. 웹 애플리케이션이나 클라우드 서비스에서 로그를 보낼 때 아주 유용합니다. 토큰 기반 인증을 사용하므로 보안성도 좋습니다.
+    access_log /var/log/nginx/access.json.log json_analytics;
+}
+```
 
-#### Syslog
-방화벽이나 스위치 같은 네트워크 장비는 보통 Syslog를 사용합니다. 하지만 Splunk 인덱서에 직접 Syslog를 쏘는 방식은 권장하지 않습니다. 중간에 Syslog-ng나 RSyslog 서버를 두고 UF를 통해 Splunk로 넘기는 구조가 훨씬 안정적입니다.
+**Apache 설정 (`/etc/httpd/conf/httpd.conf`):**
+```apache
+LogFormat "{ \
+  \"time\":\"%t\", \
+  \"remote_ip\":\"%a\", \
+  \"host\":\"%V\", \
+  \"request\":\"%U\", \
+  \"query\":\"%q\", \
+  \"method\":\"%m\", \
+  \"status\":\"%>s\", \
+  \"userAgent\":\"%{User-agent}i\", \
+  \"referer\":\"%{Referer}i\" \
+}" json_log
 
-### 3. 설정 파일 뜯어보기 (inputs.conf & outputs.conf)
+CustomLog "logs/access_json.log" json_log
+```
 
-Splunk 설정은 결국 텍스트 파일 싸움입니다. 가장 중요한 두 파일을 살펴보겠습니다.
+### 2. Linux 시스템 로그: rsyslog
+리눅스 커널이나 시스템 서비스 로그는 `rsyslog`를 통해 관리됩니다. 이를 로컬 파일로 저장하거나 Splunk로 직접 전송할 수 있습니다.
 
-#### inputs.conf (데이터를 어디서 가져올 것인가)
-이 설정은 로그를 읽어 들일 서버(UF)에 위치합니다.
+**rsyslog 설정 (`/etc/rsyslog.d/splunk.conf`):**
+```conf
+# 모든 로그를 특정 파일에 저장
+*.* /var/log/all_system_events.log
 
+# 또는 특정 포트로 직접 전송 (UDP)
+*.* @10.1.1.10:514
+```
+
+### 3. Windows Event Forwarding (WEF)
+윈도우 환경에서는 각 서버의 이벤트 로그를 수집 서버(Collector)로 모은 뒤, 그곳에서 Splunk Universal Forwarder를 통해 전송하는 방식이 효율적입니다. `Event Viewer`에서 구독(Subscription)을 설정하여 보안, 시스템, 애플리케이션 로그를 중앙 집중화합니다.
+
+---
+
+## Module 2: 로그 수집 (The Collection) - Universal Forwarder (UF)
+
+로그가 생성되었다면 이제 Splunk로 안전하게 옮겨야 합니다. 이때 사용하는 도구가 Universal Forwarder(UF)입니다.
+
+### 1. UF 설치 및 기본 연결
+UF는 리소스를 최소한으로 사용하는 경량 에이전트입니다.
+
+```bash
+# 설치 및 실행
+tar xvzf splunkforwarder-9.x.x.tgz -C /opt/
+/opt/splunkforwarder/bin/splunk start --accept-license
+
+# 인덱서(데이터 저장소) 주소 등록
+/opt/splunkforwarder/bin/splunk add forward-server 10.1.1.10:9997
+```
+
+### 2. inputs.conf: 무엇을 읽을 것인가?
+Nginx의 JSON 로그를 읽도록 설정해 보겠습니다.
+
+**`/opt/splunkforwarder/etc/system/local/inputs.conf`:**
 ```ini
-[monitor:///var/log/nginx/access.log]
+[monitor:///var/log/nginx/access.json.log]
 index = web_logs
-sourcetype = nginx:access
+sourcetype = nginx:json
 disabled = 0
 ```
 
-- `[monitor:///var/log/nginx/access.log]`: 감시할 파일의 절대 경로를 지정합니다.
-- `index = web_logs`: 이 로그가 저장될 인덱스 이름입니다. 미리 생성해둬야 합니다.
-- `sourcetype = nginx:access`: 데이터의 형식을 정의합니다. 나중에 검색할 때 필드로 자동 파싱되는 기준이 됩니다.
-- `disabled = 0`: 이 설정을 활성화한다는 뜻입니다. 1로 바꾸면 로그 수집을 멈춥니다.
+### 3. outputs.conf: 어디로 보낼 것인가?
+데이터 전송의 안정성을 위해 `useACK` 옵션을 활성화합니다.
 
-#### outputs.conf (데이터를 어디로 보낼 것인가)
-수집한 데이터를 인덱서로 전달하는 설정입니다.
-
+**`/opt/splunkforwarder/etc/system/local/outputs.conf`:**
 ```ini
-[tcpout]
-defaultGroup = primary_indexers
-
-[tcpout:primary_indexers]
-server = 10.1.1.10:9997, 10.1.1.11:9997
+[tcpout:default-autolb-group]
+server = 10.1.1.10:9997
 useACK = true
 ```
 
-- `[tcpout]`: TCP를 통해 데이터를 내보내겠다는 선언입니다.
-- `defaultGroup = primary_indexers`: 아래 정의한 서버 그룹을 기본 목적지로 사용합니다.
-- `server = 10.1.1.10:9997, 10.1.1.11:9997`: 데이터를 받을 인덱서들의 IP와 포트입니다. 콤마로 구분해서 여러 대를 적으면 로드 밸런싱이 일어납니다.
-- `useACK = true`: 인덱서가 데이터를 잘 받았는지 확인 응답을 보내도록 설정합니다. 데이터 유실을 방지하는 아주 중요한 옵션입니다.
+---
 
-### 4. 빅테크 실무 사례: 대규모 로그 처리 전략
+## Module 3: 웹 로그 그 너머 (Diverse Data Sources)
 
-제가 근무했던 곳에서는 하루에 수백 테라바이트의 로그가 쏟아졌습니다. 이때 가장 큰 문제는 네트워크 대역폭과 인덱서 부하입니다.
+실무에서는 웹 로그 외에도 다양한 데이터를 다룹니다.
 
-우리는 모든 엔드포인트에 UF를 깔고, 중간에 HF 계층을 두어 불필요한 디버그 로그를 80% 이상 쳐냈습니다. "Error"나 "Critical" 키워드가 없는 일반 정보성 로그는 인덱싱하지 않고 버림으로써 비용을 획기적으로 줄였습니다. 또한 HEC를 사용할 때는 로드 밸런서를 앞에 두어 특정 인덱서에 트래픽이 몰리는 현상을 막았습니다.
+### 1. Database Audit Logs
+데이터베이스의 쿼리 이력이나 보안 감사 로그는 매우 중요합니다.
+- **MySQL:** `server-audit-log`를 활성화하여 파일로 저장한 뒤 UF로 수집합니다.
+- **PostgreSQL:** `postgresql.conf`에서 `logging_collector = on`과 `log_statement = 'all'`을 설정합니다.
 
-### 5. 2주차 자가 진단 퀴즈
+### 2. Network Logs (Firewall/Switch)
+네트워크 장비는 에이전트를 설치할 수 없습니다. 따라서 장비가 내보내는 Syslog를 Splunk가 직접 받거나, 중간에 Syslog-ng 서버를 두어 파일로 저장한 뒤 수집합니다.
 
-**문제 1: 데이터 가공(Parsing)이 필요 없고 리소스 사용을 최소화해야 하는 서버에 설치하기 적합한 포워더는?**
-- 정답: Universal Forwarder (UF)
+### 3. Application Logs (Log4j/Logback)
+자바 애플리케이션은 `Log4j`를 많이 사용합니다.
+- **File Appender:** 로그를 파일로 쓰고 UF가 읽는 방식 (가장 권장됨).
+- **Socket Appender:** 네트워크를 통해 직접 전송하는 방식 (애플리케이션 성능에 영향을 줄 수 있음).
 
-**문제 2: outputs.conf에서 데이터 유실을 방지하기 위해 반드시 설정해야 하는 옵션은?**
-- 정답: useACK = true
+---
 
-**문제 3: 방화벽 로그를 수집할 때 인덱서에 직접 Syslog를 쏘는 것보다 권장되는 방식은?**
-- 정답: 중간에 Syslog 서버(Syslog-ng 등)를 두고 UF를 통해 전달하는 방식
+## Module 4: Zero-to-Hero 로깅 파이프라인 구축 워크플로우
 
-데이터 온보딩은 Splunk 운영의 절반 이상을 차지합니다. 오늘 배운 설정 파일들을 직접 수정해보며 감을 익히시기 바랍니다. 3주차에는 이렇게 수집한 데이터를 어떻게 검색하고 분석하는지 알아보겠습니다.
+실제 환경에서 파이프라인을 구축하는 순서는 다음과 같습니다.
+
+1.  **요구사항 분석:** 어떤 필드가 필요한지, 보관 주기(Retention)는 얼마인지 결정합니다.
+2.  **소스 시스템 설정:** Nginx나 DB에서 로그 생성을 활성화하고 포맷을 JSON으로 맞춥니다.
+3.  **인덱스 생성:** Splunk 서버에서 데이터를 담을 그릇인 `Index`를 미리 만듭니다.
+4.  **UF 설치 및 설정:** 대상 서버에 UF를 깔고 `inputs.conf`와 `outputs.conf`를 작성합니다.
+5.  **데이터 검증:** Splunk Search Head에서 `index=web_logs` 쿼리로 데이터가 잘 들어오는지 확인합니다.
+6.  **파싱 최적화:** 타임스탬프가 정확한지, 멀티라인 로그가 깨지지 않는지 점검합니다.
+
+---
+
+## Module 5: Splunk 데이터 파이프라인의 4단계 세그먼트
+
+데이터가 소스에서 인덱서까지 흐르는 내부 과정을 이해해야 트러블슈팅이 가능합니다.
+
+### 1. Input Segment (입력 단계)
+- **수행 위치:** Universal Forwarder (UF)
+- **동작:** 데이터 소스로부터 원시 데이터를 읽어 64KB 블록으로 쪼갭니다.
+- **핵심:** `host`, `source`, `sourcetype` 메타데이터가 여기서 처음 붙습니다.
+
+### 2. Parsing Segment (파싱 단계)
+- **수행 위치:** Heavy Forwarder (HF) 또는 Indexer
+- **동작:** 개별 이벤트로 분리하고 타임스탬프를 추출합니다.
+- **설정:** `LINE_BREAKER`, `TIME_FORMAT` 등이 여기서 적용됩니다.
+
+### 3. Indexing Segment (인덱싱 단계)
+- **수행 위치:** Indexer
+- **동작:** 데이터를 디스크의 버킷(Bucket)에 쓰고 검색 인덱스를 생성합니다.
+- **특징:** 이 단계가 끝나면 원본 데이터는 수정할 수 없습니다.
+
+### 4. Search Segment (검색 단계)
+- **수행 위치:** Search Head
+- **동작:** 사용자의 SPL 쿼리에 따라 인덱서에서 데이터를 가져와 시각화합니다.
+
+---
+
+## Module 6: 큐(Queue) 메커니즘과 성능 최적화
+
+Splunk는 데이터 유실을 막기 위해 내부적으로 큐를 사용합니다.
+
+- **Memory Queues:** 기본적으로 모든 큐는 메모리에 상주합니다 (512KB).
+- **Persistent Queues:** 네트워크 장애 시 데이터를 잃지 않도록 디스크 공간을 큐로 사용합니다.
+  ```ini
+  [monitor:///var/log/app.log]
+  persistentQueueSize = 5GB
+  ```
+- **Backpressure:** 인덱서가 바쁘면 포워더의 큐가 가득 차고, 결국 데이터 수집이 멈춥니다. 이는 데이터 유실을 방지하는 정상적인 동작입니다.
+
+---
+
+## Module 7: 3시간 강의 요약 및 과제
+
+### 핵심 요약
+1.  로그는 소스 시스템(Nginx, DB 등)에서 먼저 올바르게 생성되어야 합니다.
+2.  JSON 포맷은 Splunk 온보딩의 치트키입니다.
+3.  UF는 `inputs.conf`로 읽고 `outputs.conf`로 보냅니다.
+4.  데이터는 Input -> Parsing -> Indexing -> Search의 단계를 거칩니다.
+
+### 실습 과제
+- 자신의 로컬 환경에 Nginx를 설치하고 JSON 로그를 생성하도록 설정하세요.
+- UF를 통해 해당 로그를 Splunk로 전송하고, 특정 필드(예: status)로 통계를 내보세요.
+- `outputs.conf`에서 `useACK = true`를 설정한 뒤 인덱서를 끄고 UF의 로그 변화를 관찰하세요.
+
+---
+**Next Week:** 3주차에는 수집된 데이터를 요리하는 SPL(Search Processing Language) 기초와 통계 분석에 대해 배웁니다.

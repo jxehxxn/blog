@@ -1,69 +1,126 @@
 ---
 layout: post
-title: "MITRE ATT&CK 매핑과 Splunk SPL 생성: 실전 SOC를 위한 딥다이브"
+title: "MITRE ATT&CK Deep Dive and Splunk Detection Engineering: A Comprehensive Guide"
 date: 2024-04-27 09:00:00 +0900
 categories: security splunk
 ---
 
-빅테크 기업의 보안 운영 센터(SOC)에서 근무하며 가장 많이 받는 질문 중 하나는 "우리가 정말 안전한가?"입니다. 이 질문에 답하려면 단순히 방화벽 로그를 보는 수준을 넘어야 합니다. 공격자의 관점에서 우리 시스템의 빈틈을 찾아내고, 그 빈틈을 메울 수 있는 탐지 로직을 갖춰야 하죠. 오늘은 MITRE ATT&CK 프레임워크를 Splunk와 결합해 실질적인 방어 체계를 구축하는 방법을 살펴보겠습니다.
+Modern security operations centers (SOC) face a constant barrage of threats. To defend effectively, we must move beyond simple signature-based detection. We need a structured way to understand how attackers operate. This is where the MITRE ATT&CK framework comes in. This chapter explores how to integrate MITRE ATT&CK with Splunk to build a resilient detection engineering pipeline.
 
-### MITRE ATT&CK: 단순한 목록이 아닌 전략 지도
+### The Foundation: MITRE ATT&CK Framework
 
-많은 조직이 MITRE ATT&CK을 단순한 체크리스트로 오해합니다. 하지만 빅테크 환경에서 이 매트릭스는 공격자의 전술(Tactics)과 기법(Techniques)을 시각화한 전략 지도입니다. 우리는 이 지도를 바탕으로 데이터 모델을 설계합니다.
+MITRE ATT&CK is a globally accessible knowledge base of adversary tactics and techniques based on real-world observations. It provides a common language for security professionals to describe and analyze attacks.
 
-엔드포인트(Endpoint) 데이터 모델은 프로세스 생성, 파일 시스템 변경, 레지스트리 수정을 포함합니다. 네트워크(Network) 데이터 모델은 트래픽 흐름, DNS 쿼리, HTTP 요청을 다룹니다. 이 두 모델을 결합해야만 공격자의 전체 경로를 파악할 수 있습니다.
+Tactics represent the "why" of an attack. They are the adversary's tactical goals, such as gaining initial access or exfiltrating data. Techniques represent the "how." They are the specific methods used to achieve a tactical goal. Procedures are the specific implementation of a technique by a particular threat actor.
 
-### 실전 워크스루: T1059(명령 및 스크립팅 인터프리터) 탐지
+### Data Models and Normalization
 
-공격자가 가장 즐겨 쓰는 기법 중 하나가 바로 T1059입니다. 파워쉘이나 CMD를 이용해 악성 코드를 실행하는 방식이죠. 이를 Sysmon 데이터를 활용해 Splunk에서 탐지하는 SPL을 만들어 보겠습니다.
+Before we can detect anything, we need data. In Splunk, this data must be normalized using the Common Information Model (CIM). This ensures that fields like "src_ip" or "user" are consistent across different data sources.
 
+For endpoint detection, we rely on the Endpoint data model. This includes datasets for processes, file systems, and registry changes. For network detection, we use the Network Traffic and Network Resolution (DNS) models. Without proper normalization, our correlation searches will fail to catch threats across diverse environments.
+
+### Deep Dive: 5 Critical Techniques and Splunk Mappings
+
+Let's examine five common techniques and how to map them to Splunk detection logic.
+
+#### 1. T1059: Command and Scripting Interpreter
+
+Attackers use interpreters like PowerShell, Python, or the Windows Command Shell to execute malicious code. This is a versatile technique used for everything from initial execution to persistence.
+
+**Splunk Mapping:**
+We look for suspicious process executions. We focus on interpreters launched with encoded commands or from unusual parent processes.
+
+**Correlation Search (Splunk ES):**
 ```splunk
-index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1
-| eval process_name=lower(Image)
-| where process_name IN ("*powershell.exe", "*cmd.exe", "*wscript.exe", "*cscript.exe")
-| stats count by _time, host, User, Image, CommandLine, ParentImage, ParentCommandLine
-| sort - _time
+| tstats `summariesonly` count min(_time) as firstTime max(_time) as lastTime from datamodel=Endpoint.Processes where Processes.process_name IN ("powershell.exe", "pwsh.exe", "cmd.exe") Processes.process IN ("*-enc*", "*-encodedcommand*", "*bypass*", "*-nop*") by Processes.dest Processes.user Processes.parent_process_name Processes.process_name Processes.process Processes.process_id Processes.parent_process_id
+| `drop_dm_object_name(Processes)`
+| `security_content_ctime(firstTime)`
+| `security_content_ctime(lastTime)`
 ```
+This search identifies PowerShell or CMD instances running with common obfuscation flags. It uses the Endpoint data model for performance.
 
-이 쿼리는 단순히 프로세스 실행만 보는 게 아닙니다. 어떤 부모 프로세스가 이 스크립트를 실행했는지, 어떤 인자값이 전달되었는지 함께 분석합니다. 빅테크에서는 여기서 한 발 더 나아가 화이트리스트 기반의 예외 처리를 자동화합니다.
+#### 2. T1078: Valid Accounts
 
-### 커버리지 히트맵 구축하기
+Adversaries often use stolen credentials to gain access or move laterally. This is difficult to detect because the activity looks like legitimate user behavior.
 
-탐지 로직을 만들었다면 이제 우리 조직의 방어 수준을 시각화해야 합니다. Splunk의 'Lookup' 기능을 활용해 각 기법별 탐지 여부를 매핑합니다.
+**Splunk Mapping:**
+We look for anomalies in login patterns. This includes logins from unusual locations, at odd hours, or to systems the user doesn't typically access.
 
-1.  **데이터 수집**: 모든 탐지 룰에 MITRE 기법 ID를 태깅합니다.
-2.  **매핑**: 탐지 룰이 활성화된 기법은 녹색, 데이터는 있지만 룰이 없는 경우는 황색, 데이터조차 없는 경우는 적색으로 표시합니다.
-3.  **대시보드**: 이를 Splunk 대시보드로 구현해 실시간 보안 성숙도를 측정합니다.
+**Correlation Search (Splunk ES):**
+```splunk
+| tstats `summariesonly` count from datamodel=Authentication where Authentication.action="success" by Authentication.user, Authentication.src, Authentication.dest
+| iplocation Authentication.src
+| eventstats avg(count) as avg_logins, stdev(count) as dev_logins by Authentication.user
+| where count > (avg_logins + (3 * dev_logins))
+| `drop_dm_object_name(Authentication)`
+```
+This search uses statistical analysis to find users with a sudden spike in successful logins, which might indicate credential abuse.
 
-이 히트맵은 보안 예산을 어디에 집중해야 할지 결정하는 중요한 근거가 됩니다.
+#### 3. T1003: OS Credential Dumping
 
-### 자가 진단 퀴즈
+Attackers dump credentials from the operating system to escalate privileges. On Windows, this often involves accessing the Local Security Authority Subsystem Service (LSASS) memory.
 
-학습한 내용을 확인해 보세요. 정답은 하단에 있습니다.
+**Splunk Mapping:**
+We monitor for processes accessing LSASS.exe with suspicious access rights. Tools like Mimikatz are common culprits.
 
-**문제 1**: MITRE ATT&CK에서 '전술(Tactics)'이 의미하는 것은 무엇인가요?
-A) 공격자가 사용하는 구체적인 도구
-B) 공격자가 달성하려는 보안 목표
-C) 공격자의 물리적 위치
-D) 공격에 사용된 특정 IP 주소
+**Correlation Search (Splunk ES):**
+```splunk
+index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=10 TargetImage="C:\\Windows\\system32\\lsass.exe"
+| search GrantedAccess="0x1010" OR GrantedAccess="0x1410"
+| stats count by _time, Computer, SourceImage, SourceProcessId, TargetImage, GrantedAccess
+```
+This search uses Sysmon Event ID 10 (Process Access) to find non-standard processes requesting handle access to LSASS.
 
-**문제 2**: Sysmon EventCode 1번을 사용해 탐지하기 가장 적합한 데이터는 무엇인가요?
-A) 네트워크 연결 시도
-B) 파일 삭제 기록
-C) 프로세스 생성 및 실행
-D) 레지스트리 값 변경
+#### 4. T1021: Remote Services
 
-**문제 3**: 커버리지 히트맵에서 '적색'이 의미하는 가장 위험한 상황은 무엇인가요?
-A) 탐지 룰이 너무 많아 오탐이 발생하는 상태
-B) 공격 기법에 대한 로그 데이터 자체가 수집되지 않는 상태
-C) 보안 담당자가 휴가 중인 상태
-D) 서버의 CPU 점유율이 높은 상태
+Lateral movement often involves using legitimate remote services like RDP or SMB. Attackers use these to move from one compromised host to another.
 
----
+**Splunk Mapping:**
+We look for RDP connections between internal hosts that don't usually communicate. We also watch for "Pass-the-Hash" attempts over SMB.
 
-### 퀴즈 정답
-1: B (전술은 공격자의 목표를 나타냅니다.)
-2: C (EventCode 1은 Process Creation을 의미합니다.)
-3: B (데이터가 없으면 탐지 자체가 불가능하므로 가장 위험합니다.)
+**Correlation Search (Splunk ES):**
+```splunk
+| tstats `summariesonly` count from datamodel=Network_Traffic where All_Traffic.dest_port=3389 by All_Traffic.src, All_Traffic.dest
+| lookup internal_assets.csv device_id as All_Traffic.src OUTPUT type as src_type
+| lookup internal_assets.csv device_id as All_Traffic.dest OUTPUT type as dest_type
+| where src_type="workstation" AND dest_type="workstation"
+| `drop_dm_object_name(All_Traffic)`
+```
+This search flags RDP traffic between two workstations. In most environments, workstations should only RDP to servers, not to each other.
 
-보안은 한 번에 완성되는 것이 아닙니다. 지속적으로 매핑하고, 쿼리를 개선하며, 히트맵을 채워나가는 과정이 SOC의 본질입니다. 여러분의 환경에서도 오늘 바로 T1059 탐지 쿼리를 실행해 보시기 바랍니다.
+#### 5. T1055: Process Injection
+
+Process injection is a method of executing arbitrary code in the address space of a separate live process. This helps attackers evade detection and gain higher privileges.
+
+**Splunk Mapping:**
+We monitor for cross-process memory operations. Sysmon Event ID 8 (CreateRemoteThread) is a key indicator.
+
+**Correlation Search (Splunk ES):**
+```splunk
+index=windows source="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=8
+| stats count by _time, Computer, SourceImage, TargetImage, StartAddress
+| where NOT match(SourceImage, "(?i)C:\\\\Windows\\\\System32\\\\.*")
+```
+This search identifies instances where a process creates a thread in another process, excluding standard Windows system processes.
+
+### Building the Detection Pipeline
+
+Detection engineering is a continuous cycle. It starts with identifying a threat and ends with a validated, tuned alert.
+
+1.  **Threat Modeling**: Identify which MITRE techniques are most relevant to your organization.
+2.  **Data Gap Analysis**: Determine if you have the logs needed to detect those techniques.
+3.  **Logic Development**: Write the SPL or correlation search.
+4.  **Testing and Validation**: Use tools like Atomic Red Team to simulate the attack and verify the alert.
+5.  **Tuning**: Reduce false positives by adding exceptions for legitimate administrative activity.
+
+### Measuring Success with Coverage Heatmaps
+
+A coverage heatmap is a visual representation of your detection capabilities. It maps your active correlation searches to the MITRE ATT&CK matrix.
+
+Green cells indicate techniques with robust detection. Yellow cells show techniques where you have data but no active alerts. Red cells represent gaps where you lack both data and detection.
+
+This heatmap is not just for the SOC. It is a powerful tool for communicating security posture to leadership. It shows exactly where investments in new data sources or engineering time will have the most impact.
+
+### Conclusion
+
+Integrating MITRE ATT&CK with Splunk transforms your SOC from reactive to proactive. By focusing on attacker techniques rather than just indicators of compromise, you build a defense that is much harder to bypass. Start small, pick five techniques, and build your first correlation searches today. The goal is not to cover the entire matrix at once, but to continuously improve your visibility and response capabilities.
