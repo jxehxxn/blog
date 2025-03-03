@@ -1,9 +1,9 @@
 # Setup
-title: Dark Poole
-url: https://andrewhwanpark.github.io/dark-poole
+title: JAEHOON
+url: https://jxehxxn.github.io/blog
 paginate: 1
-paginate_path: "/dark-poole/page:num/"
-baseurl: "/dark-poole"
+paginate_path: "/blog/page:num/"
+baseurl: "/blog"
 permalink: pretty
 
 # Gems
@@ -31,19 +31,10 @@ sass:
 # Replace this value and uncomment to enable Google Analytics tracking
 # ga_analytics: UA-000000-0
 
-# Specify the author for blog posts
-author:
-  name: Mark Otto
-  url: https://twitter.com/mdo
-  email: markdotto@gmail.com
-
-# Custom vars
-version: 3.0.0
-
 # Navbar page list
 nav:
   - title: Blog
-    url: /dark-poole/archive
+    url: /blog/archive
 
   - title: About
-    url: /dark-poole/about
+    url: /
