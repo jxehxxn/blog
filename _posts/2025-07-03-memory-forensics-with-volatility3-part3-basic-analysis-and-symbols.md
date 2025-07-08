@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "메모리 덤프 파헤치기 (3/5) - 기본 분석과 심볼"
-date:   2025-07-10 10:00:00 +0900
+date:   2025-07-03 10:00:00 +0900
 categories: forensics volatility
 ---
 

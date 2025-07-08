@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "메모리 포렌식과 Volatility3의 첫걸음 (1/5)"
-date:   2025-07-08 10:00:00 +0900
+date:   2025-07-01 10:00:00 +0900
 categories: forensics volatility
 ---
 

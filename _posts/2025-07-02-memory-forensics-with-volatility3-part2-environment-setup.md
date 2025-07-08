@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "완벽한 분석 환경 구축하기 (2/5)"
-date:   2025-07-09 10:00:00 +0900
+date:   2025-07-02 10:00:00 +0900
 categories: forensics volatility
 ---
 

@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "핵심 플러그인 활용 (4/5) - 프로세스, 네트워크, 레지스트리"
-date:   2025-07-11 10:00:00 +0900
+date:   2025-07-04 10:00:00 +0900
 categories: forensics volatility
 ---
 
