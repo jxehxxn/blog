@@ -1,8 +1,6 @@
 ---
 layout: post
 title:  "Syft와 함께하는 소프트웨어 공급망 보안 첫걸음 (3/5) - Syft CLI 완벽 정복"
-date:   2025-08-22 10:00:00 +0900
-categories: Security DevSecOps SBOM Syft Hands-on
 ---
 
 ## 들어가며

@@ -1,8 +1,6 @@
 ---
 layout: post
 title:  "Syft와 함께하는 소프트웨어 공급망 보안 첫걸음 (4/5) - Grype로 취약점 분석하기"
-date:   2025-08-23 10:00:00 +0900
-categories: Security DevSecOps SBOM Syft Grype Hands-on
 ---
 
 ## 들어가며

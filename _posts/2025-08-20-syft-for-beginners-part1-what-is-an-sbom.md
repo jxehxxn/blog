@@ -1,8 +1,6 @@
 ---
 layout: post
 title:  "Syft와 함께하는 소프트웨어 공급망 보안 첫걸음 (1/5) - 내 코드는 무엇으로 만들어졌을까?"
-date:   2025-08-20 10:00:00 +0900
-categories: Security DevSecOps SBOM Syft
 ---
 
 ## 들어가며: 맛있는 김치찌개의 비밀

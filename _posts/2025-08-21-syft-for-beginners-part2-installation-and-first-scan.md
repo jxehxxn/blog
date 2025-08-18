@@ -1,8 +1,6 @@
 ---
 layout: post
 title:  "Syft와 함께하는 소프트웨어 공급망 보안 첫걸음 (2/5) - 10분 만에 첫 SBOM 생성하기"
-date:   2025-08-21 10:00:00 +0900
-categories: Security DevSecOps SBOM Syft Hands-on
 ---
 
 ## 들어가며

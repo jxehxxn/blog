@@ -1,8 +1,6 @@
 ---
 layout: post
 title:  "Syft와 함께하는 소프트웨어 공급망 보안 첫걸음 (5/5) - GitHub Actions로 자동화하기"
-date:   2025-08-24 10:00:00 +0900
-categories: Security DevSecOps SBOM Syft Grype GitHub-Actions Hands-on
 ---
 
 ## 들어가며: 사람의 기억을 믿지 마세요
